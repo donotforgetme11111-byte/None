@@ -17,7 +17,7 @@ jobs:
       - name: build
         run: |
           cat puzzle/part_* | gunzip > puzzle.cnf
-          gcc -O3 -march=native -o probsat probsat.c -lm
+          gcc -O3 -march=native -o probsat fastps.c -lm
           curl -sL https://github.com/arminbiere/yalsat/archive/refs/heads/master.tar.gz | tar xz
           (cd yalsat-master && ./configure.sh >/dev/null && make >/dev/null) && cp yalsat-master/yalsat .
           nproc
