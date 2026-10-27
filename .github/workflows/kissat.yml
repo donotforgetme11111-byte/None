@@ -1,0 +1,45 @@
+name: kissat
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  solve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        job: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: |
+          cat puzzle/part_* | gunzip > puzzle.cnf
+          curl -sL https://github.com/arminbiere/kissat/archive/refs/heads/master.tar.gz | tar xz
+          (cd kissat-master && ./configure >/dev/null && make -j4 >/dev/null) && cp kissat-master/build/kissat .
+          ./kissat --version; nproc
+      - name: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          J=${{ matrix.job }}
+          N=$(nproc)
+          for i in $(seq 0 $((N-1))); do
+            S=$((J*100+i+11))
+            case $((i%4)) in
+              0) OPT="--sat";;
+              1) OPT="--sat --walkinitially=true";;
+              2) OPT="--sat --target=2 --phase=false";;
+              3) OPT="--default";;
+            esac
+            ( ./kissat $OPT --seed=$S --time=20400 -q puzzle.cnf > k_$i.txt 2>&1
+              if grep -q "^s SATISFIABLE" k_$i.txt; then
+                gh issue create --repo "$GITHUB_REPOSITORY" --title "SOLVED kissat job $J core $i" --body "$(grep '^v' k_$i.txt)"
+                pkill kissat
+              fi ) &
+          done
+          wait
+          grep -h "^s " k_*.txt || true
