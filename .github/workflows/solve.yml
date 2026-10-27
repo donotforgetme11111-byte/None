@@ -1,0 +1,66 @@
+name: solve
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  solve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: |
+          cat puzzle/part_* | gunzip > puzzle.cnf
+          gcc -O3 -march=native -o probsat probsat.c -lm
+          curl -sL https://github.com/arminbiere/yalsat/archive/refs/heads/master.tar.gz | tar xz
+          (cd yalsat-master && ./configure.sh >/dev/null && make >/dev/null) && cp yalsat-master/yalsat .
+          nproc
+      - name: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          J=${{ matrix.job }}
+          N=$(nproc)
+          LIM=${LIM:-780}
+          for i in $(seq 0 $((N-1))); do
+            S=$((J*100+i+1))
+            if [ $((i%2)) -eq 0 ]; then
+              CB=$(python3 -c "print([3.6,3.9,4.2,4.5][($J+$i//2)%4])")
+              ( ./probsat puzzle.cnf $S $LIM $CB > out_$i.txt 2> log_$i.txt ) &
+            else
+              ( timeout $LIM ./yalsat puzzle.cnf $S > yal_$i.txt 2>&1 ) &
+            fi
+          done
+          python3 - <<'PY' &
+          import glob,time,subprocess,os
+          cl=[list(map(int,l.split()[:-1])) for l in open('puzzle.cnf') if l[0] not in 'cp' and l.strip()]
+          n=max(abs(x) for c in cl for x in c)
+          def ok(bits): return len(bits)>=n and all(any((x>0)==(bits[abs(x)-1]=='1') for x in c) for c in cl)
+          t0=time.time();seen=set()
+          while time.time()-t0<800:
+              for f in glob.glob('out_*.txt')+glob.glob('yal_*.txt'):
+                  if f in seen: continue
+                  s=open(f).read()
+                  bits=None
+                  if f.startswith('out_') and s.strip() and set(s.strip())<={'0','1'}: bits=s.strip()
+                  if f.startswith('yal_') and 's SATISFIABLE' in s:
+                      a=['0']*n
+                      for l in s.splitlines():
+                          if l.startswith('v'):
+                              for x in map(int,l.split()[1:]):
+                                  if x>0: a[x-1]='1'
+                      bits=''.join(a)
+                  if bits and ok(bits):
+                      seen.add(f)
+                      subprocess.run(['gh','issue','create','--repo',os.environ['GITHUB_REPOSITORY'],'--title','SOLVED job ${{ matrix.job }} '+f,'--body',bits])
+                      subprocess.run('pkill probsat; pkill yalsat',shell=True); raise SystemExit
+              time.sleep(2)
+          PY
+          wait
+          grep -h "best\|minimum" log_*.txt yal_*.txt | tail -8 || true
